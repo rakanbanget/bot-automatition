@@ -1,0 +1,45 @@
+{
+  "proxy": {
+    "host": "PROXY_HOST",
+    "port": 12345,
+    "username": "PROXY_USER",
+    "password": "PROXY_PASS"
+  },
+  "telegram": {
+    "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+    "chat_id": "YOUR_TELEGRAM_CHAT_ID"
+  },
+  "antam": {
+    "boutique": [
+      "Butik Emas LM - Gedung Antam",
+      "Butik Emas LM - Setiabudi One",
+      "ATGM-Gedung Antam",
+      "ATGM-Graha Dipta",
+      "Butik Emas LM - Bekasi",
+      "Butik Emas LM - Bintaro",
+      "Butik Emas LM - Bogor",
+      "Butik Emas LM - Graha Dipta",
+      "Butik Emas LM - Puri Indah",
+      "Butik Emas LM - Serpong",
+      "Exhibition - Mall Taman Anggrek",
+      "Exhibition - Pakuwon Mall Bekasi",
+      "Exhibition - Pondok Indah Mall"
+    ],
+    "target_url": "https://antrean.logammulia.com/",
+    "max_retry": 99999,
+    "retry_delay_seconds": 30
+  },
+  "personal_data": {
+    "nama_lengkap": "Hilda Aenusyifa",
+    "no_ktp": "3201XXXXXXXXXXX",
+    "no_hp": "085692005020",
+    "email": "hilda01@gmail.com",
+    "password": "antam123"
+  },
+  "browser": {
+    "headless": false,
+    "viewport_width": 1366,
+    "viewport_height": 768,
+    "turnstile_timeout_seconds": 60
+  }
+}
