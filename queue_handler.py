@@ -42,7 +42,7 @@ SELECTORS = {
     "field_email": "input[name='email'], input[type='email'], input#email",
 
     # ── Submit form antrean
-    "submit_btn": "button[type='submit'], input[type='submit'], button:has-text('Submit'), button:has-text('Ambil'), button:has-text('Daftar')",
+    "submit_btn": "button[type='submit'], input[type='submit'], button:has-text('Submit'), button:has-text('Daftar'), button:has-text('Konfirmasi')",
 
     # ── Indikator sukses
     "success_indicator": ".success, .alert-success, .nomor-antrean, #nomor-antrean, h2.success, p:has-text('berhasil'), p:has-text('Antrean Anda')",
@@ -535,11 +535,37 @@ async def click_queue_button(page) -> bool:
         # Klik tombol aslinya
         await human_click(page, SELECTORS["queue_button"])
         print("[Queue] 📋 Tombol Ambil Antrean diklik.")
-        await human_delay(1.5, 3.0)
+        
+        # ── MONITOR POP-UP SEGERA pasca-klik (jangan biarkan bot macet di Step 4!)
+        # SweetAlert muncul dalam 1-3 detik setelah klik jika antrean penuh/tutup.
+        print("[Queue] 👁️ Memantau SweetAlert pasca-klik (5 detik)...")
+        for check in range(10): # 10 x 0.5s = 5 detik total
+            await asyncio.sleep(0.5)
+            try:
+                sweet_modal = page.locator(".swal2-popup, .swal-modal, .sweet-alert")
+                if await sweet_modal.count() > 0 and await sweet_modal.first.is_visible():
+                    modal_text = (await sweet_modal.first.inner_text()).lower()
+                    print(f"[Queue] ⚠️ SweetAlert muncul pasca-klik: '{modal_text.strip()[:80]}'")
+                    ok_btn = page.locator("button.swal2-confirm, button:has-text('OK'), button.swal2-ok")
+                    if await ok_btn.count() > 0:
+                        await ok_btn.first.click()
+                        print("[Queue] ✅ Tombol OK pada SweetAlert diklik.")
+                    # Penolakan → return False agar bot langsung retry
+                    return False
+                    
+                # Jika sudah ter-redirect ke halaman lain (masuk-pool, ruang-tunggu), berhenti dan lanjut
+                current_url = page.url
+                if "masuk-pool" in current_url or "ruang-tunggu" in current_url:
+                    print(f"[Queue] ✅ Redirect ke: {current_url} — Lanjutkan!")
+                    return True
+            except:
+                pass
+        
         return True
     except Exception as e:
         print(f"[Queue] ❌ Gagal klik tombol antrean: {e}")
         return False
+
 
 
 async def select_boutique(page, boutique_name: str) -> bool:
@@ -659,6 +685,24 @@ async def verify_invoice_success(page, timeout: int = 15) -> bool:
         except:
             page_text = ""
             
+        # 0. Cek SweetAlert modal penolakan SEGERA (sebelum apapun!)
+        # Tangani pop-up seperti 'Antrean sudah Tutup' atau 'Mohon Maaf' yang muncul pasca-redirect.
+        try:
+            sweet_modal = page.locator(".swal2-popup, .swal-modal, .sweet-alert")
+            if await sweet_modal.count() > 0 and await sweet_modal.first.is_visible():
+                modal_text = (await sweet_modal.first.inner_text()).lower()
+                ok_btn = page.locator("button.swal2-confirm, button:has-text('OK'), button.swal2-ok")
+                if await ok_btn.count() > 0:
+                    await ok_btn.first.click()
+                if "tutup" in modal_text or "maaf" in modal_text or "penuh" in modal_text:
+                    print(f"[Queue] ❌ SweetAlert penolakan terdeteksi: '{modal_text.strip()[:60]}'. Retry segera!")
+                    return False
+                print(f"[Queue] ℹ️ SweetAlert lain ditutup: '{modal_text.strip()[:60]}'")
+                await asyncio.sleep(1.0)
+                continue
+        except:
+            pass
+
         # 1. Cek Sukses Mutlak
         if any(kw in current_url for kw in ["sukses", "success", "nomor", "konfirmasi", "antrean/", "invoice"]):
             print(f"[Queue] 🎉 BERHASIL! Rute sukses terdeteksi: {current_url}")
@@ -690,7 +734,26 @@ async def verify_invoice_success(page, timeout: int = 15) -> bool:
             await asyncio.sleep(5.0)
             continue # Terus memutar loop hold
             
-        # 3. Cek Penolakan / Gagal Mutlak di ujung
+        # 3. Fast-Fail: Bot di-redirect balik ke halaman antrean index (penolakan server)
+        # URL contoh: /antrean?site=22&t=... (bukan /ruang-tunggu, bukan /masuk-pool)
+        if "/antrean?site=" in current_url and "ruang-tunggu" not in current_url:
+            # Cek apakah ada pop-up SweetAlert yang mungkin belum ter-render
+            await asyncio.sleep(2.5)
+            try:
+                sweet_modal = page.locator(".swal2-popup, .swal-modal, .sweet-alert")
+                if await sweet_modal.count() > 0 and await sweet_modal.first.is_visible():
+                    modal_text = (await sweet_modal.first.inner_text()).lower()
+                    ok_btn = page.locator("button.swal2-confirm, button:has-text('OK')")
+                    if await ok_btn.count() > 0:
+                        await ok_btn.first.click()
+                    print(f"[Queue] ❌ Redirect + SweetAlert terdeteksi: '{modal_text.strip()[:60]}'. Retry segera!")
+                    return False
+            except:
+                pass
+            print(f"[Queue] ❌ Bot dikembalikan ke halaman index antrean (penolakan server). Retry segera!")
+            return False
+
+        # 4. Cek Penolakan / Gagal Mutlak di ujung
         if "kuota habis" in page_text or "tidak terpilih" in page_text or "kuota penuh" in page_text or "slot penuh" in page_text or "antrean penuh" in page_text:
             print("[Queue] 💔 Server menolak / Kuota meluap saat di dalam ruang tunggu.")
             return False

@@ -245,8 +245,39 @@ async def run_bot_cycle(page, config: dict, dry_run: bool = False,
             return False
 
     if dry_run:
-        print("\n[Bot] 🧪 DRY-RUN MODE — Bot berhenti sebelum eksekusi Ambil Antrean & Isi Form.")
+        print("\n[Bot] 🧪 DRY-RUN MODE — Bot berhenti sebelum eksekusi Ambil Antrean.")
         print("[Bot] ✅ Multi-Pemindaian Butik berhasil! Stealth & Logic beroperasi 100%!")
+        
+        # ── Baca dan tampilkan informasi JAM BUKA dari halaman untuk verifikasi manual
+        try:
+            page_text = await page.inner_text("body")
+            import re
+            # Cari pola jam buka yang biasa muncul: 'Pukul XX:XX - XX:XX'
+            jam_match = re.findall(r'[Pp]ukul[\s·•]*([\d:]+\s*[-–]\s*[\d:]+)', page_text)
+            sesi_match = re.findall(r'[Ss]esi[^\n]{0,60}', page_text)
+            info_match = re.findall(r'[Ii]nformasi [Ss]tock[^\n]{0,80}', page_text)
+            sisa_match = re.findall(r'[Ss]isa\s*[:\-]?\s*(\d+)', page_text)
+            
+            print("\n" + "="*55)
+            print("📋 RINGKASAN DETEKSI BOT (Verifikasi Manual):")
+            print("="*55)
+            print(f"🏪 Butik Target    : {available_boutique}")
+            if jam_match:
+                print(f"🕐 Jam Buka (Bot)  : Pukul {jam_match[0]}")
+            else:
+                print("🕐 Jam Buka        : ⚠️  Tidak terdeteksi (cek browser manual)")
+            if sesi_match:
+                print(f"📅 Sesi            : {sesi_match[0].strip()[:60]}")
+            if info_match:
+                print(f"💎 Info Stok       : {info_match[0].strip()[:60]}")
+            if sisa_match:
+                print(f"🎟️  Sisa Kuota      : {sisa_match[0]} slot")
+            print("="*55)
+            print("⚠️  Bandingkan info di atas dengan yang kamu lihat di browser!")
+            print("="*55 + "\n")
+        except Exception as e:
+            print(f"[Bot] ⚠️ Gagal membaca info jam buka: {e}")
+        
         return True
 
     # Notifikasi slot ditemukan
@@ -255,12 +286,39 @@ async def run_bot_cycle(page, config: dict, dry_run: bool = False,
 
     # ── Step 3: Waktu Kedatangan & Ambil Antrean
     print(f"\n[Bot] 🕒 Step 3: Pilih Waktu Kedatangan & Klik Ambil Antrean")
-    await select_waktu_kedatangan(page)
+    time_selected = await select_waktu_kedatangan(page)
+    if not time_selected:
+        print("[Bot] 🔴 Gagal memilih slot waktu (Semua Jam Penuh / Ghost Slot). Membatalkan aksi klik demi mengeliminasi Server-Rejection Loop.")
+        return False
     await human_delay(0.5, 1.5)
     
     # Verifikasi Turnstile Inline (muncul pasca-waktu kedatangan)
     print(f"\n[Bot] 🛡️ Verifikasi Cloudflare Turnstile Inline")
     await wait_for_turnstile(page, timeout_seconds=turnstile_timeout)
+    
+    # ── WAJIB: Tunggu Cloudflare benar-benar SELESAI sebelum klik apapun!
+    # Token di DOM sudah ada, tapi visual centang Cloudflare masih berputar 1-3 detik.
+    # Klik terlalu cepat = server Antam anggap tidak sah → ditolak!
+    print("[Bot] ⏳ Menunggu Cloudflare selesai sepenuhnya (jeda wajib 3 detik)...")
+    await asyncio.sleep(3.0)
+    
+    # Bonus: tunggu frame Cloudflare menghilang dari layar (max 5 detik)
+    try:
+        await page.wait_for_function(
+            "() => !document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]') || "
+            "document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]').offsetParent === null",
+            timeout=5000
+        )
+        print("[Bot] ✅ Frame Cloudflare sudah tidak terlihat. Aman untuk klik!")
+    except:
+        print("[Bot] ℹ️ Frame Cloudflare masih ada tapi kita lanjut (token sudah valid).")
+
+    # Tunggu tombol 'Ambil Antrean' muncul setelah dropdown waktu ter-select
+    try:
+        await page.wait_for_selector("button:has-text('Ambil Antrean'), a:has-text('Ambil Antrean'), button.btn-antrean, a.btn-antrean", state="visible", timeout=15000)
+        print("[Bot] ✅ Tombol 'Ambil Antrean' terdeteksi, siap diklik.")
+    except:
+        print("[Bot] ⚠️ Tombol 'Ambil Antrean' tidak muncul dalam 15 detik, mencoba klik anyway...")
     
     clicked = await click_queue_button(page)
     if not clicked:
@@ -271,11 +329,12 @@ async def run_bot_cycle(page, config: dict, dry_run: bool = False,
     await fill_personal_data(page, personal_data)
     await human_delay(2.0, 4.0)
 
-    # ── Step 5: Submit form
-    submitted = await submit_queue_form(page)
-    if not submitted:
-        print("[Bot] ❌ Gagal submit. Akan retry.")
-        return False
+    # ── Step 5: Submit form (Dihapus karena Double-Click!)
+    # Pada UI Antam, klik "Ambil Antrean" di Step 3 SUDAH merupakan aksi Submit akhir.
+    # Terlalu banyak klik (tombol yang sama dipencet lagi di step 5) akan menyebabkan
+    # validasi CSRF / Anti-Bot server tertabrak dan mengembalikan kita ke halaman index!
+    print(f"[Bot] 📤 Form antrean sudah terangkut di Step 3 (Single-Click Secured).")
+    await human_delay(1.0, 2.0)
 
     # ── Step 6: Verifikasi sukses
     success = await verify_invoice_success(page)
@@ -309,8 +368,18 @@ async def main(dry_run: bool = False, config_file: str = "config.json", user_dat
         launch_kwargs = {
             "headless": browser_cfg.get("headless", False),
             "no_viewport": True,
+            # ── KRITIS: Sembunyikan jejak HeadlessChrome dari User-Agent!
+            # Tanpa ini, Cloudflare deteksi "HeadlessChrome" dan blokir Turnstile selamanya.
+            "user_agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/145.0.0.0 Safari/537.36"
+            ),
             "args": [
-                "--disable-blink-features=AutomationControlled"
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                # Paksa Chromium agar tidak mengekspos flag headless di header
+                "--window-size=1366,768",
             ],
             "extra_http_headers": {
                 "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7"
@@ -365,13 +434,10 @@ async def main(dry_run: bool = False, config_file: str = "config.json", user_dat
                 notify_error(config, err_msg)
 
             if not success and attempt < max_retry:
-                print(f"\n[Bot] ⏳ Menunggu {retry_delay} detik sebelum retry...\n")
-
-                # Kirim notifikasi retry setiap 5 kali
-                if attempt % 5 == 0:
-                    notify_retry(config, attempt, max_retry)
-
-                await asyncio.sleep(retry_delay)
+                # Jika bot selesai normal (bukan crash), cukup delay singkat untuk retry cepat
+                short_delay = antam_cfg.get("retry_short_delay_seconds", 3)
+                print(f"\n[Bot] ⚡ Retry cepat dalam {short_delay} detik...\n")
+                await asyncio.sleep(short_delay)
 
                 # Reload halaman untuk retry bersih
                 try:

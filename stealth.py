@@ -119,14 +119,22 @@ async def random_mouse_movement(page, steps: int = 5):
 
 async def human_click(page, selector: str):
     """Klik elemen dengan delay dan gerakan kursor manusiawi."""
-    element = await page.wait_for_selector(selector, timeout=10000)
+    element = await page.wait_for_selector(selector, state="visible", timeout=20000)
     if not element:
         raise Exception(f"Element tidak ditemukan: {selector}")
+
+    # WAJIB: Scroll elemen agar masuk ke layar / viewport sebelum mengambil koordinat
+    try:
+        await element.scroll_into_view_if_needed()
+        await asyncio.sleep(0.5) # Beri waktu scroll selesai
+    except:
+        pass
 
     box = await element.bounding_box()
     if box:
         # Klik di titik acak dalam bounding box elemen
         x = box["x"] + random.uniform(5, box["width"] - 5)
+        # Bounding box koordinat relatif terhadap viewport saat ini, jadi aman untuk di-klik jika sudah di-scroll
         y = box["y"] + random.uniform(5, box["height"] - 5)
         await page.mouse.move(x, y)
         await asyncio.sleep(random.uniform(0.2, 0.6))
